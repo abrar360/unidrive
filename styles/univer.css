@@ -1,0 +1,15 @@
+@import '@univerjs/design/lib/index.css';
+@import '@univerjs/ui/lib/index.css';
+@import '@univerjs/docs-ui/lib/index.css';
+
+/* Ensure proper container styling for Univer */
+.univer-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Override any conflicting styles */
+.univer-container * {
+  box-sizing: border-box;
+}

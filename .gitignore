@@ -1,0 +1,37 @@
+# Dependency directories
+node_modules
+.pnp
+.pnp.js
+
+# Next.js build output
+.next
+out
+
+# Production build folder (optional if you export statically)
+build
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local env files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Misc
+.DS_Store
+*.pem
+
+# VSCode workspace settings
+.vscode/*
+!.vscode/settings.json
+
+# Optional: MacOS system files
+Icon?
+
+# Univer example directory
+univer-example
