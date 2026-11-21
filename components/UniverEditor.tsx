@@ -5,6 +5,15 @@ import { useToast } from '../components/ToastProvider';
 
 const DOCUMENT_DATA = {};
 
+// Editor colours matched to how Univer 0.10.6 looked on screen. Measured from
+// before/after screenshots: 0.10.6 rendered the L-marks at ~rgb(198-208) grey
+// and the page outline at ~rgb(210-219); 1.x renders its defaults crisply
+// (marks #A8B0BD, darker and bluish; outline #E3E5EA, lighter). Applied
+// through the page-background layer; see applyWhiteWorkspace in the init effect.
+const EDITOR_WORKSPACE_COLOR = '#ffffff'; // area around the page (1.x: grey)
+const EDITOR_PAGE_OUTLINE_COLOR = '#d6d6d6'; // page border
+const EDITOR_MARGIN_MARK_COLOR = '#c4c4c4'; // L-shaped margin marks
+
 
 interface UniverEditorProps {
   documentId?: string;
@@ -266,12 +275,14 @@ export default function UniverEditor({
 
         // Univer 1.x paints page-layout documents on a grey workspace
         // ("gray.100", drawn onto the canvas by its page-background layer),
-        // where 0.10.6 was white. There's no setting for it, and Univer resets
-        // the layer's colours on every re-layout (i.e. on each edit), so wrap
-        // the layer's setFillColors: whenever no workspace colour is given,
-        // use white. Page colour and borders pass through unchanged. If a
+        // where 0.10.6 was white, and draws the page outline lighter and the
+        // L-shaped margin marks darker/bluer than 0.10.6 did. There's no
+        // setting for these, and Univer resets the layer's colours on every
+        // re-layout (i.e. on each edit), so wrap the layer's setFillColors:
+        // whenever Univer leaves a colour unset, use the 0.10.6 look instead.
+        // The page fill itself is left at Univer's default (white). If a
         // future Univer version renames the layer this does nothing and the
-        // grey returns.
+        // 1.x colours return.
         const unitId = docUnit?.getUnitId?.();
         let attempts = 0;
         const applyWhiteWorkspace = () => {
@@ -288,7 +299,12 @@ export default function UniverEditor({
                   pageFill?: string,
                   pageStroke?: string,
                   marginStroke?: string
-                ) => setFillColors(workspaceFill ?? '#ffffff', pageFill, pageStroke, marginStroke);
+                ) => setFillColors(
+                  workspaceFill ?? EDITOR_WORKSPACE_COLOR,
+                  pageFill,
+                  pageStroke ?? EDITOR_PAGE_OUTLINE_COLOR,
+                  marginStroke ?? EDITOR_MARGIN_MARK_COLOR
+                );
                 background.__unidriveWhiteWorkspace = true;
               }
               background.setFillColors(undefined, undefined, undefined, undefined);
