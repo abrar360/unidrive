@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import { useToast } from './ToastProvider';
 import MoveToFolderDialog from './MoveToFolderDialog';
+import { PREVIEW_PLACEHOLDER_URL } from '../utils/preview-placeholder';
 
 interface FileItemProps {
   icon: string;
@@ -14,7 +15,12 @@ interface FileItemProps {
   createdAt?: string;
   modifiedAt?: string;
   size?: number;
+  folderId?: string;
   onDelete?: (id: string) => void;
+  onMoved?: () => void;
+  // Called after a rename or duplicate so the parent can refresh its list
+  // (falls back to reloading the page if not provided)
+  onChanged?: () => void;
 }
 
 const FileItem: React.FC<FileItemProps> = ({
@@ -29,7 +35,8 @@ const FileItem: React.FC<FileItemProps> = ({
   size,
   folderId,
   onDelete,
-  onMoved
+  onMoved,
+  onChanged
 }) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -38,30 +45,17 @@ const FileItem: React.FC<FileItemProps> = ({
   const [newTitle, setNewTitle] = useState(title);
   const [isHovered, setIsHovered] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
-  const [imageKey, setImageKey] = useState(0); // For forcing image reload
   const [isMounted, setIsMounted] = useState(false);
+  // Set once the current rename has been saved or cancelled. Enter (or Escape)
+  // is followed by a blur as the input closes, which used to save again (or,
+  // after Escape, save the text that was just discarded).
+  const renameHandledRef = useRef(false);
   const { showToast } = useToast();
 
   // Track when component is mounted (client-side)
   useEffect(() => {
     setIsMounted(true);
   }, []);
-
-  // Listen for document updates to refresh thumbnail
-  useEffect(() => {
-    const handleDocumentUpdate = (event: any) => {
-      const { documentId } = event.detail;
-      if (documentId === id) {
-        // Force image reload by updating the key
-        setImageKey(prev => prev + 1);
-      }
-    };
-
-    window.addEventListener('document-updated', handleDocumentUpdate);
-    return () => {
-      window.removeEventListener('document-updated', handleDocumentUpdate);
-    };
-  }, [id]);
 
   // Format file size from bytes to human readable format
   const formatFileSize = (bytes: number): string => {
@@ -112,13 +106,24 @@ const FileItem: React.FC<FileItemProps> = ({
   };
 
   const handleRenameClick = () => {
+    renameHandledRef.current = false;
     setIsRenaming(true);
     setNewTitle(title);
     setShowMenu(false);
   };
 
+  const refreshAfterChange = () => {
+    if (onChanged) {
+      onChanged();
+    } else {
+      window.location.reload();
+    }
+  };
+
   const handleRenameSave = async () => {
+    if (renameHandledRef.current) return;
     if (!documentId || !id || newTitle.trim() === title) {
+      renameHandledRef.current = true;
       setIsRenaming(false);
       return;
     }
@@ -129,6 +134,7 @@ const FileItem: React.FC<FileItemProps> = ({
       return;
     }
     
+    renameHandledRef.current = true;
     try {
       const response = await fetch(`/api/documents/${documentId}`, {
         method: 'PUT',
@@ -143,17 +149,19 @@ const FileItem: React.FC<FileItemProps> = ({
         throw new Error(errorData.error || 'Failed to rename document');
       }
       
-      // Force page refresh to update the title in the list
-      window.location.reload();
+      refreshAfterChange();
     } catch (error) {
       console.error('Error renaming document:', error);
       showToast(`Failed to rename document: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     }
-    
+
+    // The guard stays set until the next rename starts (handleRenameClick), so
+    // the blur that fires as the input closes can't send a second request
     setIsRenaming(false);
   };
 
   const handleRenameCancel = () => {
+    renameHandledRef.current = true;
     setNewTitle(title);
     setIsRenaming(false);
   };
@@ -189,6 +197,8 @@ const FileItem: React.FC<FileItemProps> = ({
         body: JSON.stringify({
           title: duplicateTitle,
           content: documentData.content || {},
+          // Keep the copy in the same folder as the original
+          ...(folderId ? { folderId } : {}),
         }),
       });
       
@@ -197,8 +207,7 @@ const FileItem: React.FC<FileItemProps> = ({
         throw new Error(errorData.error || 'Failed to duplicate document');
       }
       
-      // Refresh the page to show the new duplicate
-      window.location.reload();
+      refreshAfterChange();
     } catch (error) {
       console.error('Error duplicating document:', error);
       showToast(`Failed to duplicate document: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
@@ -232,10 +241,15 @@ const FileItem: React.FC<FileItemProps> = ({
         {/* Preview Image */}
         <div className="h-36 bg-gradient-to-br from-gray-900/50 to-black/80 overflow-hidden relative">
           <img 
-            key={`${id}-${imageKey}`}
+            key={id}
             alt={title}
             className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-300 ease-out" 
-            src={previewUrl} 
+            src={previewUrl}
+            onError={(e) => {
+              // Missing or broken thumbnail: show the inline placeholder (once)
+              const img = e.currentTarget;
+              if (img.src !== PREVIEW_PLACEHOLDER_URL) img.src = PREVIEW_PLACEHOLDER_URL;
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent"></div>
         </div>

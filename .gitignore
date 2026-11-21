@@ -35,3 +35,5 @@ Icon?
 
 # Univer example directory
 univer-example
+# Local document storage (user data)
+storage/

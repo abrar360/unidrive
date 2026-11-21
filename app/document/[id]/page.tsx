@@ -10,6 +10,8 @@ export default function EditDocument() {
   const router = useRouter();
   const [documentData, setDocumentData] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Set when the document can't be loaded; shown instead of a blank editor
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -29,7 +31,7 @@ export default function EditDocument() {
         setDocumentData(documentData);
       } catch (error) {
         console.error('Load failed:', error);
-        // Optionally set an error state for user feedback
+        setLoadError(error instanceof Error ? error.message : 'Failed to load document');
       } finally {
         setLoading(false);
       }
@@ -53,16 +55,12 @@ export default function EditDocument() {
         throw new Error('Failed to save document');
       }
       
-      const result = await response.json();
-      console.log('Document updated successfully:', result);
-      
-      // Dispatch event to notify dashboard that preview needs to be refreshed
-      window.dispatchEvent(new CustomEvent('document-updated', {
-        detail: { documentId: params.id, timestamp: Date.now() }
-      }));
+      await response.json();
     } catch (error) {
       console.error('Save failed:', error);
       showToast('Failed to save document', 'error');
+      // Re-throw so the editor keeps the change marked as unsaved and retries it
+      throw error;
     }
   };
 
@@ -70,6 +68,22 @@ export default function EditDocument() {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-gray-400 text-sm font-light">Loading document...</div>
+      </div>
+    );
+  }
+
+  // Don't open an empty editor for a document that doesn't exist (or failed to
+  // load): typing into it could never be saved
+  if (loadError || !documentData) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center gap-4">
+        <div className="text-gray-300 text-sm">{loadError || 'Failed to load document'}</div>
+        <button
+          onClick={() => router.push('/')}
+          className="btn-primary px-4 py-2 rounded-lg text-sm"
+        >
+          Back to your documents
+        </button>
       </div>
     );
   }

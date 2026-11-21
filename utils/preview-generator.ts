@@ -1,6 +1,7 @@
 import { writeFile, mkdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { PREVIEW_PLACEHOLDER_URL } from './preview-placeholder';
 
 interface UniverDocument {
   body: {
@@ -25,20 +26,19 @@ export class DocumentPreviewGenerator {
       return [];
     }
 
-    const dataStream = document.body.dataStream;
-    const paragraphs = document.body.paragraphs || [];
-    
-    // For now, let's use a simpler approach that respects the natural line breaks in the data
-    // Split on multiple \r sequences which seem to indicate line breaks
-    const lines = dataStream
-      .split(/\r{2,}/)  // Split on 2 or more \r characters
-      .map(line => line.replace(/[\r\n]/g, '').trim())  // Clean up individual lines
-      .filter(line => line.length > 0);  // Remove empty lines
-    
-    // Convert to structured format with spacing
+    // Univer ends every paragraph with "\r" and every section with "\n". The
+    // stream also contains invisible control tokens (custom range / block /
+    // table markers), which are stripped before splitting into paragraphs.
+    const lines = document.body.dataStream
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .split(/\r\n?|\n/)
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+
+    // Convert to structured format with a small gap between paragraphs
     return lines.map((text, index) => ({
       text,
-      spaceAbove: index > 0 ? 5 : 0  // Add some space between lines
+      spaceAbove: index > 0 ? 2 : 0
     }));
   }
 
@@ -84,7 +84,7 @@ export class DocumentPreviewGenerator {
         
         // Add space above if specified
         if (structuredLine.spaceAbove && structuredLine.spaceAbove > 0) {
-          currentY += structuredLine.spaceAbove * 3; // Convert space units to pixels
+          currentY += structuredLine.spaceAbove * 3; // Convert space units to pixels (2 -> 6px gap between paragraphs)
         }
         
         // Break long lines into multiple display lines
@@ -188,7 +188,7 @@ export class DocumentPreviewGenerator {
     }
     
     // Return placeholder if preview doesn't exist yet
-    return 'https://via.placeholder.com/300x200/f8f9fa/374151?text=Generating...';
+    return PREVIEW_PLACEHOLDER_URL;
   }
 }
 

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile, writeFile, unlink } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { isValidDocumentId } from '../../../../utils/ids';
+import { deleteDocumentFiles } from '../../../../utils/document-files';
 import { previewGenerator } from '../../../../utils/preview-generator';
 
 // GET method to retrieve a specific document by ID
@@ -13,7 +15,7 @@ export async function GET(
     const { id: documentId } = await params;
     
     // Validate document ID format
-    if (!documentId || typeof documentId !== 'string') {
+    if (!isValidDocumentId(documentId)) {
       return NextResponse.json(
         { error: 'Invalid document ID' },
         { status: 400 }
@@ -64,7 +66,7 @@ export async function PUT(
     const { id: documentId } = await params;
     
     // Validate document ID format
-    if (!documentId || typeof documentId !== 'string') {
+    if (!isValidDocumentId(documentId)) {
       return NextResponse.json(
         { error: 'Invalid document ID' },
         { status: 400 }
@@ -90,10 +92,10 @@ export async function PUT(
       );
     }
 
-    // Sanitize title to prevent file system issues
-    const sanitizedTitle = body.title
+    // Sanitize title to prevent file system issues (empty if not provided)
+    const requestedTitle = typeof body.title === 'string'
       ? body.title.replace(/[<>:"/\\|?*]/g, '').trim().substring(0, 100)
-      : 'Untitled Document';
+      : '';
 
     const storageDir = join(process.cwd(), 'storage');
     const documentsDir = join(storageDir, 'documents');
@@ -113,6 +115,22 @@ export async function PUT(
     const fileContent = await readFile(documentPath, 'utf-8');
     const existingDocument = JSON.parse(fileContent);
 
+    // Read existing metadata so fields owned elsewhere (e.g. folderId, set by the
+    // move endpoint) survive the save. Without this, every save moved the
+    // document back to the root.
+    let existingMetadata: Record<string, any> = {};
+    if (existsSync(metadataPath)) {
+      try {
+        existingMetadata = JSON.parse(await readFile(metadataPath, 'utf-8'));
+      } catch (metadataError) {
+        console.error(`Could not read metadata for ${documentId}, rebuilding it:`, metadataError);
+      }
+    }
+
+    // Keep the current title when the request doesn't supply a usable one
+    const sanitizedTitle =
+      requestedTitle || existingDocument.title || existingMetadata.title || 'Untitled Document';
+
     // Prepare updated document data
     const updatedDocument = {
       ...existingDocument,
@@ -123,6 +141,7 @@ export async function PUT(
 
     // Prepare updated metadata
     const updatedMetadata = {
+      ...existingMetadata,
       id: documentId,
       title: sanitizedTitle,
       createdAt: existingDocument.createdAt,
@@ -177,37 +196,22 @@ export async function DELETE(
     const { id: documentId } = await params;
     
     // Validate document ID format
-    if (!documentId || typeof documentId !== 'string') {
+    if (!isValidDocumentId(documentId)) {
       return NextResponse.json(
         { error: 'Invalid document ID' },
         { status: 400 }
       );
     }
 
-    const storageDir = join(process.cwd(), 'storage');
-    const documentsDir = join(storageDir, 'documents');
-    const metadataDir = join(storageDir, 'metadata');
-    const documentPath = join(documentsDir, `${documentId}.json`);
-    const metadataPath = join(metadataDir, `${documentId}.json`);
-
-    // Check if document file exists
-    if (!existsSync(documentPath)) {
+    // Removes content, metadata and preview; tolerates any of them being
+    // missing (previously a missing metadata file made the delete fail with
+    // a 500 after the content had already been removed)
+    const existed = await deleteDocumentFiles(documentId);
+    if (!existed) {
       return NextResponse.json(
         { error: 'Document not found' },
         { status: 404 }
       );
-    }
-
-    // Delete document and metadata files
-    await unlink(documentPath);
-    await unlink(metadataPath);
-    
-    // Delete preview file if it exists
-    const previewPath = join(process.cwd(), 'storage', 'previews', `${documentId}.png`);
-    if (existsSync(previewPath)) {
-      await unlink(previewPath).catch(error => {
-        console.error('Preview deletion error:', error);
-      });
     }
 
     return NextResponse.json({

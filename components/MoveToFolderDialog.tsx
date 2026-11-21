@@ -5,9 +5,32 @@ import { useToast } from './ToastProvider';
 interface Folder {
   id: string;
   name: string;
+  parentFolderId?: string | null;
   createdAt: string;
   modifiedAt: string;
   documentCount: number;
+}
+
+// Order folders as a tree (parents followed by their subfolders) with a depth
+// for indentation. Folders whose parent is missing are shown at the top level.
+function toTree(folders: Folder[]): Array<Folder & { depth: number }> {
+  const ids = new Set(folders.map((f) => f.id));
+  const children = new Map<string | null, Folder[]>();
+  for (const folder of folders) {
+    const parent = folder.parentFolderId && ids.has(folder.parentFolderId) ? folder.parentFolderId : null;
+    children.set(parent, [...(children.get(parent) || []), folder]);
+  }
+  const result: Array<Folder & { depth: number }> = [];
+  const visit = (parent: string | null, depth: number, seen: Set<string>) => {
+    for (const folder of children.get(parent) || []) {
+      if (seen.has(folder.id)) continue; // guard against parent cycles
+      seen.add(folder.id);
+      result.push({ ...folder, depth });
+      visit(folder.id, depth + 1, seen);
+    }
+  };
+  visit(null, 0, new Set());
+  return result;
 }
 
 interface MoveToFolderDialogProps {
@@ -27,7 +50,7 @@ const MoveToFolderDialog: React.FC<MoveToFolderDialogProps> = ({
   onClose,
   onMoved
 }) => {
-  const [folders, setFolders] = useState<Folder[]>([]);
+  const [folders, setFolders] = useState<Array<Folder & { depth: number }>>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
@@ -50,12 +73,13 @@ const MoveToFolderDialog: React.FC<MoveToFolderDialogProps> = ({
   const fetchFolders = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/folders');
+      // all=true includes subfolders, so documents can be moved into them
+      const response = await fetch('/api/folders?all=true');
       if (!response.ok) {
         throw new Error('Failed to fetch folders');
       }
       const data = await response.json();
-      setFolders(data.folders || []);
+      setFolders(toTree(data.folders || []));
     } catch (err) {
       console.error('Error fetching folders:', err);
       showToast('Failed to load folders', 'error');
@@ -150,9 +174,10 @@ const MoveToFolderDialog: React.FC<MoveToFolderDialogProps> = ({
               
               {/* Folders */}
               {folders.map((folder) => (
-                <label 
+                <label
                   key={folder.id}
                   className="flex items-center space-x-3 p-2.5 rounded-lg hover:bg-white/[0.04] transition-colors duration-150 cursor-pointer"
+                  style={{ paddingLeft: `${10 + folder.depth * 20}px` }}
                 >
                   <input
                     type="radio"

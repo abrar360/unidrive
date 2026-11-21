@@ -22,228 +22,179 @@ export default function UniverEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const univerRef = useRef<any>(null);
   const [documentTitle, setDocumentTitle] = useState(initialData?.title || title);
+  // Latest title for timer callbacks, which would otherwise see a stale state value
+  const titleRef = useRef<string>(initialData?.title || title);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'changed' | 'saving'>('idle');
   const facadeRef = useRef<any>(null);
-  const lastContentHashRef = useRef<string>('');
-  const lastTitleHashRef = useRef<string>('');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const titleSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const commandListenerRef = useRef<{ dispose: () => void } | null>(null);
+  // What has changed since the last save was queued
+  const contentDirtyRef = useRef(false);
+  const titleDirtyRef = useRef(false);
+  // Saves run one at a time through this chain, so two saves can never race
+  // (on the create page, racing saves used to create the document twice).
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const savesInFlightRef = useRef(0);
+  // Latest onSave, so callbacks registered once at init never call a stale one
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
   const { showToast } = useToast();
 
-  // Function to handle document changes and trigger auto-save
-  const handleDocumentChange = async () => {
-    if (saving || !onSave) return;
+  const hasUnsavedChanges = () =>
+    contentDirtyRef.current || titleDirtyRef.current || savesInFlightRef.current > 0;
+
+  // Read the current document snapshot from Univer, synchronously.
+  // Returns null when no real snapshot is available. Callers must not save in
+  // that case: saving placeholder content would overwrite the user's document.
+  const readSnapshot = (): any | null => {
+    const univerAPI = facadeRef.current;
+    if (!univerAPI) return null;
 
     try {
-      const currentContent = await extractDocumentContent();
-      const currentHash = JSON.stringify(currentContent);
-      
-      if (currentHash !== lastContentHashRef.current) {
-        lastContentHashRef.current = currentHash;
-        setAutoSaveStatus('changed');
-        
-        // Clear existing timeout if any
-        if (saveTimeoutRef.current) {
-          clearTimeout(saveTimeoutRef.current);
-        }
-        
-        // Set new timeout for auto-save
-        saveTimeoutRef.current = setTimeout(async () => {
-          console.log('🔍 DEBUG: Content auto-save triggered');
-          setAutoSaveStatus('saving');
-          
-          // Get the current title from the input field to avoid stale state
-          const titleInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-          const currentTitle = titleInput?.value || documentTitle;
-          
-          const documentData = {
-            title: currentTitle,
-            content: currentContent
-          };
-          
-          console.log('🔍 DEBUG: Content auto-save with data:', documentData);
-          await onSave(documentData);
-          setLastSaved(new Date());
-          
-          setAutoSaveStatus('idle');
-        }, 2000); // 2 second debounce
-      }
+      // Univer 1.x: FDocument.save() replaces the old getSnapshot()
+      const activeDoc = univerAPI.getActiveDocument?.();
+      const snapshot = activeDoc?.save?.();
+      return snapshot && snapshot.body ? snapshot : null;
     } catch (error) {
-      console.error('Error handling document change:', error);
+      console.error('Error extracting content:', error);
+      return null;
     }
   };
 
- // Function to handle title changes and trigger auto-save
- const handleTitleChange = async (newTitle: string) => {
-   if (saving || !onSave) return;
+  // Capture what needs saving *now* (synchronously, while the editor still
+  // exists) and queue the network request behind any save already in flight.
+  // Returns null if there was nothing to save.
+  const queueSave = (opts: { forceContent?: boolean } = {}): Promise<void> | null => {
+    const save = onSaveRef.current;
+    if (!save) return null;
 
-   console.log('🔍 DEBUG: handleTitleChange called with:', newTitle);
-   console.log('🔍 DEBUG: Current documentTitle state:', documentTitle);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
 
-   try {
-     const currentHash = newTitle;
-     
-     if (currentHash !== lastTitleHashRef.current) {
-       lastTitleHashRef.current = currentHash;
-       setAutoSaveStatus('changed');
-       
-       console.log('🔍 DEBUG: Title changed, will auto-save in 2 seconds');
-       
-       // Clear existing timeout if any
-       if (titleSaveTimeoutRef.current) {
-         clearTimeout(titleSaveTimeoutRef.current);
-       }
-       
-       // Set new timeout for auto-save, capturing the new title in the closure
-       titleSaveTimeoutRef.current = setTimeout(async () => {
-         console.log('🔍 DEBUG: Auto-save triggered, using captured title:', newTitle);
-         setAutoSaveStatus('saving');
-         
-         // Use the captured newTitle instead of documentTitle state
-         const documentContent = await extractDocumentContent();
-         const documentData = {
-           title: newTitle, // Use the captured title directly
-           content: documentContent
-         };
-         
-         console.log('🔍 DEBUG: Title auto-save with data:', documentData);
-         await onSave(documentData);
-         setLastSaved(new Date());
-         lastContentHashRef.current = JSON.stringify(documentContent);
-         
-         setAutoSaveStatus('idle');
-       }, 2000); // 2 second debounce
-     }
-   } catch (error) {
-     console.error('Error handling title change:', error);
-   }
- };
+    const wantContent = contentDirtyRef.current || !!opts.forceContent;
+    const wantTitle = titleDirtyRef.current;
+    if (!wantContent && !wantTitle) return null;
 
-  // Function to set up auto-save functionality
-  const setupAutoSave = async () => {
-    if (!facadeRef.current || !onSave) {
-      console.log('❌ Cannot setup auto-save: facade or onSave not available');
+    const content = wantContent ? readSnapshot() : null;
+    if (wantContent && !content && !wantTitle) {
+      // Editor can't produce a snapshot; never save placeholder content
+      if (opts.forceContent) {
+        return Promise.reject(new Error('Could not read document content from the editor'));
+      }
+      return null;
+    }
+
+    // Without content the server keeps the existing content
+    const payload: { title: string; content?: any } = content
+      ? { title: titleRef.current, content }
+      : { title: titleRef.current };
+
+    // Edits made while this save is in flight mark the flags again
+    contentDirtyRef.current = false;
+    titleDirtyRef.current = false;
+    savesInFlightRef.current += 1;
+    setAutoSaveStatus('saving');
+
+    const run = saveChainRef.current.then(async () => {
+      try {
+        await save(payload);
+        setLastSaved(new Date());
+      } catch (error) {
+        // Keep the change marked as unsaved so it's retried and the
+        // leave-page warning still fires
+        if (content) contentDirtyRef.current = true;
+        if (wantTitle) titleDirtyRef.current = true;
+        throw error;
+      } finally {
+        savesInFlightRef.current -= 1;
+        if (savesInFlightRef.current === 0) {
+          setAutoSaveStatus(contentDirtyRef.current || titleDirtyRef.current ? 'changed' : 'idle');
+        }
+      }
+    });
+    // Keep the chain alive even if this save fails
+    saveChainRef.current = run.catch(() => {});
+    return run;
+  };
+
+  // Restart the 2 second debounce. Called on every keystroke, so it stays cheap:
+  // the document is only read when the timer fires.
+  const scheduleSave = () => {
+    if (!onSaveRef.current) return;
+    setAutoSaveStatus('changed');
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
+      queueSave()?.catch((error) => console.error('Auto-save failed:', error));
+    }, 2000);
+  };
+
+  // Called on every document mutation (each keystroke)
+  const handleDocumentChange = () => {
+    contentDirtyRef.current = true;
+    scheduleSave();
+  };
+
+  const handleTitleChange = (newTitle: string) => {
+    titleRef.current = newTitle;
+    titleDirtyRef.current = true;
+    scheduleSave();
+  };
+
+  // Function to set up auto-save functionality.
+  // Univer 1.x exposes command events via univerAPI.addEvent(Event.CommandExecuted).
+  // Only document mutations (actual content changes) trigger a change check;
+  // selection/cursor operations are ignored.
+  const setupAutoSave = () => {
+    const univerAPI = facadeRef.current;
+    if (!univerAPI || !onSave) {
+      console.warn("Cannot set up auto-save: facade or onSave not available");
       return;
     }
 
-    console.log('🚀 Setting up event listeners for auto-save...');
-    console.log('Facade available:', !!facadeRef.current);
-    console.log('onSave prop available:', !!onSave);
-    
     try {
-      let activeDocument = null;
-      
-      // Debug: Log available facade methods
-      if (facadeRef.current) {
-        console.log('Facade methods:', Object.getOwnPropertyNames(facadeRef.current));
-        console.log('Facade prototype methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(facadeRef.current)));
-      }
-      
-      // Method 1: Try to get active document through facade
-      if (typeof facadeRef.current.getActiveDocument === 'function') {
-        activeDocument = facadeRef.current.getActiveDocument();
-        console.log('Active document found:', !!activeDocument);
-      } else {
-        console.log('getActiveDocument method not available');
-      }
-      
-      // Method 2: If no active document, try to get all documents
-      if (!activeDocument && typeof facadeRef.current.getAllDocuments === 'function') {
-        const allDocs = facadeRef.current.getAllDocuments();
-        console.log('All documents:', allDocs);
-        if (allDocs && allDocs.length > 0) {
-          activeDocument = allDocs[0];
-          console.log('Using first document from getAllDocuments');
-        }
-      } else if (!activeDocument) {
-        console.log('getAllDocuments method not available');
-      }
-
-      if (activeDocument) {
-        console.log('Active document methods:', Object.getOwnPropertyNames(activeDocument));
-        console.log('Active document prototype methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(activeDocument)));
-        
-        // Try to listen for document changes using available event methods
-        let eventListenerSet = false;
-        const eventMethods = ['on', 'addEventListener', 'subscribe', 'onChange'];
-        
-        for (const method of eventMethods) {
-          if (typeof activeDocument[method] === 'function') {
-            // Use the first available event method
-            activeDocument[method]('change', handleDocumentChange);
-            console.log(`✅ Using ${method} for document change events`);
-            eventListenerSet = true;
-            break;
+      commandListenerRef.current?.dispose();
+      commandListenerRef.current = univerAPI.addEvent(
+        univerAPI.Event.CommandExecuted,
+        (event: { id?: string }) => {
+          if (event.id && event.id.startsWith("doc.mutation")) {
+            handleDocumentChange();
           }
         }
-
-        // Also try to listen for command/operation events if available
-        if (typeof facadeRef.current.on === 'function') {
-          facadeRef.current.on('operation', handleDocumentChange);
-          console.log('✅ Listening for operation events on facade');
-          eventListenerSet = true;
-        }
-        
-        // Try onCommandExecuted as another event method
-        if (!eventListenerSet && typeof facadeRef.current.onCommandExecuted === 'function') {
-          facadeRef.current.onCommandExecuted((command: any) => {
-            console.log('📝 Command executed:', command.id);
-            // Filter for content-changing commands
-            if (command.id && (
-              command.id.includes('doc.operation') ||
-              command.id.includes('text') ||
-              command.id.includes('insert') ||
-              command.id.includes('delete') ||
-              command.id.includes('replace')
-            )) {
-              console.log('🔄 Content change detected via command:', command.id);
-              handleDocumentChange();
-            }
-          });
-          console.log('✅ Using onCommandExecuted for content change detection');
-          eventListenerSet = true;
-        }
-        
-        if (!eventListenerSet) {
-          console.warn('⚠️ No event methods available - auto-save disabled');
-        }
-      } else {
-        // Try onCommandExecuted even without active document
-        if (typeof facadeRef.current.onCommandExecuted === 'function') {
-          facadeRef.current.onCommandExecuted((command: any) => {
-            console.log('📝 Command executed (no active doc):', command.id);
-            // Filter for content-changing commands
-            if (command.id && (
-              command.id.includes('doc.operation') ||
-              command.id.includes('text') ||
-              command.id.includes('insert') ||
-              command.id.includes('delete') ||
-              command.id.includes('replace')
-            )) {
-              console.log('🔄 Content change detected via command (no active doc):', command.id);
-              handleDocumentChange();
-            }
-          });
-          console.log('✅ Using onCommandExecuted without active document');
-        } else {
-          console.warn('⚠️ No active document and no command events - auto-save disabled');
-        }
-      }
+      );
     } catch (error) {
-      console.error('❌ Error setting up event listeners:', error);
-      console.warn('⚠️ Auto-save disabled due to event listener setup failure');
+      console.error("Error setting up auto-save listener:", error);
+      console.warn("Auto-save disabled due to event listener setup failure");
     }
   };
 
+  // Neutralise the app's dark <body> styles while the editor is mounted so they
+  // can't leak into copied text (see body.unidrive-editor-open in globals.css).
   useEffect(() => {
-    if (!containerRef.current || univerRef.current) return;
+    document.body.classList.add('unidrive-editor-open');
+    return () => {
+      document.body.classList.remove('unidrive-editor-open');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // React Strict Mode (dev) mounts, unmounts and re-mounts every component.
+    // Initialisation is async, so without this flag the first run would still
+    // finish after its cleanup and leave a second, orphaned editor running.
+    let cancelled = false;
+    let instance: any = null;
 
     const initializeUniver = async () => {
       try {
-        // Dynamic imports to prevent redi conflicts
+        // Load everything first; nothing is created until all awaits are done.
         const [
           { LocaleType, mergeLocales, Univer, UniverInstanceType },
           DesignEnUS,
@@ -253,7 +204,8 @@ export default function UniverEditor({
           { UniverFormulaEnginePlugin },
           { UniverRenderEnginePlugin },
           { UniverUIPlugin },
-          UIEnUS
+          UIEnUS,
+          { FUniver },
         ] = await Promise.all([
           import('@univerjs/core'),
           import('@univerjs/design/locale/en-US'),
@@ -263,15 +215,21 @@ export default function UniverEditor({
           import('@univerjs/engine-formula'),
           import('@univerjs/engine-render'),
           import('@univerjs/ui'),
-          import('@univerjs/ui/locale/en-US')
+          import('@univerjs/ui/locale/en-US'),
+          import('@univerjs/core/lib/facade'),
         ]);
 
-        // Import facades after core imports
+        // Facade extensions (they patch FUniver when imported)
         await Promise.all([
           import('@univerjs/engine-formula/lib/facade'),
           import('@univerjs/ui/lib/facade'),
-          import('@univerjs/docs-ui/lib/facade')
+          // Univer 1.x: getActiveDocument()/FDocument live in the docs facade
+          import('@univerjs/docs/lib/facade'),
+          import('@univerjs/docs-ui/lib/facade'),
         ]);
+
+        // This run was cleaned up while loading (Strict Mode or fast navigation)
+        if (cancelled || !containerRef.current) return;
 
         const univer = new Univer({
           locale: LocaleType.EN_US,
@@ -283,23 +241,9 @@ export default function UniverEditor({
             ),
           },
         });
-
-        // Try to import and initialize facade API
-        try {
-          // Import FUniver from facade module using direct path
-          const { FUniver } = await import('@univerjs/core/lib/facade');
-          const univerAPI = FUniver.newAPI(univer);
-          facadeRef.current = univerAPI;
-          console.log('Facade API initialized successfully');
-          
-          // Set up auto-save functionality immediately after facade initialization
-          if (onSave) {
-            setupAutoSave();
-          }
-        } catch (error) {
-          console.warn('Facade API not available:', error);
-          facadeRef.current = null;
-        }
+        instance = univer;
+        univerRef.current = univer;
+        facadeRef.current = FUniver.newAPI(univer);
 
         univer.registerPlugin(UniverRenderEnginePlugin);
         univer.registerPlugin(UniverFormulaEnginePlugin);
@@ -315,53 +259,14 @@ export default function UniverEditor({
           ...initialData.content
         } : DOCUMENT_DATA;
 
-        console.log('📄 Creating Univer document with data:', documentData);
         univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
 
-        // // Try to set the created document as active after creation
-        // setTimeout(() => {
-        //   if (facadeRef.current) {
-        //     try {
-        //       console.log('🔄 Attempting to activate document after creation...');
-              
-        //       // Method 1: Try getUniverDoc and inspect what we get
-        //       if (typeof facadeRef.current.getUniverDoc === 'function') {
-        //         const doc = facadeRef.current.getUniverDoc(documentData.id);
-        //         console.log('Retrieved document by ID:', !!doc);
-        //         if (doc) {
-        //           console.log('Document object keys:', Object.getOwnPropertyNames(doc));
-        //           console.log('Document prototype methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(doc)));
-        //         }
-        //       }
-              
-        //       // Method 2: Try using _univerInstanceService directly
-        //       if (facadeRef.current._univerInstanceService) {
-        //         const instanceService = facadeRef.current._univerInstanceService;
-        //         console.log('Instance service available:', !!instanceService);
-        //         if (typeof instanceService.focusUnit === 'function') {
-        //           instanceService.focusUnit(documentData.id);
-        //           console.log('✅ Used focusUnit to activate document');
-        //         } else if (typeof instanceService.setCurrentUnit === 'function') {
-        //           instanceService.setCurrentUnit(documentData.id);
-        //           console.log('✅ Used setCurrentUnit to activate document');
-        //         }
-        //       }
-              
-        //       // Method 3: Force refresh the facade active document
-        //       setTimeout(() => {
-        //         if (typeof facadeRef.current.getActiveDocument === 'function') {
-        //           const activeDoc = facadeRef.current.getActiveDocument();
-        //           console.log('Active document after activation attempts:', !!activeDoc);
-        //         }
-        //       }, 50);
-        //     } catch (error) {
-        //       console.error('Error activating document:', error);
-        //     }
-        //   }
-        // }, 100);
-
-        univerRef.current = univer;
+        // Set up auto-save once the document exists
+        if (onSave) {
+          setupAutoSave();
+        }
       } catch (error) {
+        if (cancelled) return;
         console.error('Univer initialization failed:', error);
         showToast('Document editor failed to initialize', 'error');
       }
@@ -370,134 +275,57 @@ export default function UniverEditor({
     initializeUniver();
 
     return () => {
-      if (univerRef.current) {
-        univerRef.current.dispose();
-        univerRef.current = null;
+      cancelled = true;
+      // Save anything still waiting on the debounce timer. The snapshot is read
+      // synchronously here, while the editor still exists; the request finishes
+      // in the background (the page is still loaded for in-app navigation).
+      queueSave()?.catch((error) => console.error('Save on close failed:', error));
+      commandListenerRef.current?.dispose();
+      commandListenerRef.current = null;
+      if (instance) {
+        const toDispose = instance;
+        if (univerRef.current === toDispose) {
+          univerRef.current = null;
+          facadeRef.current = null;
+        }
+        instance = null;
+        // Univer unmounts its own React root on dispose; doing that synchronously
+        // inside this React cleanup triggers "synchronously unmount a root while
+        // React was already rendering". Defer it to the next task.
+        setTimeout(() => toDispose.dispose(), 0);
       }
     };
-  }, []); // Remove initialData dependency to prevent re-initialization
+  }, []); // Initialise once per mount; initialData is only read at creation
 
-  // Cleanup effect for auto-save functionality
+  // Closing/reloading the tab or a full-page navigation: start saving whatever
+  // is pending and ask the browser to show its "Leave site?" prompt, because a
+  // request started during unload can be cancelled before it completes.
   useEffect(() => {
-    return () => {
-      // Cleanup event listeners and intervals on component unmount
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current);
-        checkIntervalRef.current = null;
-      }
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-      if (titleSaveTimeoutRef.current) {
-        clearTimeout(titleSaveTimeoutRef.current);
-        titleSaveTimeoutRef.current = null;
-      }
-      
-      // Try to cleanup event listeners if possible
-      try {
-        if (facadeRef.current && typeof facadeRef.current.off === 'function') {
-          facadeRef.current.off('operation', handleDocumentChange);
-        }
-        
-        // Also try to cleanup document event listeners
-        if (facadeRef.current && typeof facadeRef.current.getActiveDocument === 'function') {
-          const activeDocument = facadeRef.current.getActiveDocument();
-          if (activeDocument) {
-            const cleanupMethods = ['off', 'removeEventListener', 'unsubscribe', 'removeChangeListener'];
-            for (const method of cleanupMethods) {
-              if (typeof activeDocument[method] === 'function') {
-                activeDocument[method]('change', handleDocumentChange);
-                break;
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.warn('Error cleaning up event listeners:', error);
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      queueSave()?.catch((error) => console.error('Save on unload failed:', error));
+      if (hasUnsavedChanges()) {
+        event.preventDefault();
+        event.returnValue = '';
       }
     };
-  }, []); // Run cleanup on unmount only
-
-  // Function to extract document content for change detection
-  const extractDocumentContent = async (): Promise<any> => {
-    if (!facadeRef.current) {
-      return {
-        body: {
-          dataStream: `No facade available - ${new Date().toISOString()}`,
-          textRuns: [],
-          paragraphs: [{ startIndex: 0 }],
-        }
-      };
-    }
-
-    try {
-      let documentContent = null;
-      
-      // Method 1: Try to get active document through facade
-      if (typeof facadeRef.current.getActiveDocument === 'function') {
-        const activeDoc = facadeRef.current.getActiveDocument();
-        if (activeDoc && typeof activeDoc.getSnapshot === 'function') {
-          documentContent = activeDoc.getSnapshot();
-        }
-      }
-      
-      // Method 2: If no active document, try to get all documents
-      if (!documentContent && typeof facadeRef.current.getAllDocuments === 'function') {
-        const allDocs = facadeRef.current.getAllDocuments();
-        if (allDocs && allDocs.length > 0) {
-          const firstDoc = allDocs[0];
-          if (typeof firstDoc.getSnapshot === 'function') {
-            documentContent = firstDoc.getSnapshot();
-          }
-        }
-      }
-      
-      // Final fallback
-      if (!documentContent) {
-        documentContent = {
-          body: {
-            dataStream: `Fallback content - ${new Date().toISOString()}`,
-            textRuns: [],
-            paragraphs: [{ startIndex: 0 }],
-          }
-        };
-      }
-      
-      return documentContent;
-    } catch (error) {
-      console.error('Error extracting content:', error);
-      return {
-        body: {
-          dataStream: '',
-          textRuns: [],
-          paragraphs: [{ startIndex: 0 }],
-        }
-      };
-    }
-  };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   const handleSave = async () => {
     if (!onSave || saving) return;
-    
+
     setSaving(true);
     try {
-      const documentContent = await extractDocumentContent();
-
-      const documentData = {
-        title: documentTitle,
-        content: documentContent
-      };
-      
-      console.log('🔍 DEBUG: Saving document with title:', documentTitle);
-      console.log('🔍 DEBUG: Document data being sent:', documentData);
-      
-      await onSave(documentData);
-      setLastSaved(new Date());
-      lastContentHashRef.current = JSON.stringify(documentContent); // Update hash after successful save
+      // Always send the current content, even if nothing is marked as changed
+      await queueSave({ forceContent: true });
     } catch (error) {
+      // The page's onSave already shows a toast for request failures; only
+      // report the case where the editor itself couldn't produce content.
       console.error('Save failed:', error);
-      showToast('Failed to save document', 'error');
+      if (error instanceof Error && error.message.startsWith('Could not read document content')) {
+        showToast('Failed to save document', 'error');
+      }
     } finally {
       setSaving(false);
     }

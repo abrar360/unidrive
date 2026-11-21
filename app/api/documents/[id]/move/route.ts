@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { isValidDocumentId, isValidFolderId } from '../../../../../utils/ids';
 
 export async function PUT(
   request: NextRequest,
@@ -13,7 +14,7 @@ export async function PUT(
     const body = await request.json();
     
     // Validate document ID format
-    if (!documentId || !documentId.startsWith('doc_')) {
+    if (!isValidDocumentId(documentId)) {
       return NextResponse.json(
         { error: 'Invalid document ID' },
         { status: 400 }
@@ -32,7 +33,7 @@ export async function PUT(
 
     // If folderId is provided, validate it exists
     if (folderId !== null && folderId !== undefined) {
-      if (typeof folderId !== 'string' || !folderId.startsWith('folder_')) {
+      if (!isValidFolderId(folderId)) {
         return NextResponse.json(
           { error: 'Invalid folder ID' },
           { status: 400 }
@@ -141,7 +142,7 @@ async function updateFolderCounts(oldFolderId: string | undefined, newFolderId: 
 
   // Update folder counts for affected folders
   const foldersToUpdate = [oldFolderId, newFolderId].filter(
-    id => id && typeof id === 'string' && id.startsWith('folder_')
+    id => isValidFolderId(id)
   ) as string[];
 
   for (const folderId of foldersToUpdate) {

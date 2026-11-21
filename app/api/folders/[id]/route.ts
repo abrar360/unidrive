@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, unlink, readdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { isValidDocumentId, isValidFolderId } from '../../../../utils/ids';
+import { deleteDocumentFiles } from '../../../../utils/document-files';
+import { countDocumentsByFolder } from '../../../../utils/folder-counts';
 
 export async function GET(
   request: NextRequest,
@@ -12,7 +15,7 @@ export async function GET(
     const folderId = resolvedParams.id;
     
     // Validate folder ID format
-    if (!folderId || !folderId.startsWith('folder_')) {
+    if (!isValidFolderId(folderId)) {
       return NextResponse.json(
         { error: 'Invalid folder ID' },
         { status: 400 }
@@ -38,6 +41,8 @@ export async function GET(
 
     // Get subfolders in this folder
     let subfolders = [];
+    // Live counts (the stored documentCount goes stale)
+    const documentCounts = await countDocumentsByFolder();
     if (existsSync(foldersDir)) {
       const folderFiles = await readdir(foldersDir);
       const folderJsonFiles = folderFiles.filter(file => file.endsWith('.json'));
@@ -57,7 +62,7 @@ export async function GET(
                 parentFolderId: subfolder.parentFolderId,
                 createdAt: subfolder.createdAt,
                 modifiedAt: subfolder.modifiedAt,
-                documentCount: subfolder.documentCount || 0
+                documentCount: documentCounts.get(subfolder.id) || 0
               };
             }
             return null;
@@ -142,7 +147,7 @@ export async function PUT(
     const body = await request.json();
     
     // Validate folder ID format
-    if (!folderId || !folderId.startsWith('folder_')) {
+    if (!isValidFolderId(folderId)) {
       return NextResponse.json(
         { error: 'Invalid folder ID' },
         { status: 400 }
@@ -219,7 +224,6 @@ export async function PUT(
 
 async function deleteDocumentsInFolder(folderId: string): Promise<void> {
   const storageDir = join(process.cwd(), 'storage');
-  const documentsDir = join(storageDir, 'documents');
   const metadataDir = join(storageDir, 'metadata');
   
   if (!existsSync(metadataDir)) {
@@ -235,19 +239,16 @@ async function deleteDocumentsInFolder(folderId: string): Promise<void> {
       const content = await readFile(filePath, 'utf-8');
       const metadata = JSON.parse(content);
       
-      // Delete documents that belong to this folder
+      // Delete documents that belong to this folder (content, metadata and preview)
       if (metadata.folderId === folderId) {
-        const documentId = metadata.id;
-        
-        // Delete document content file
-        const documentPath = join(documentsDir, `${documentId}.json`);
-        if (existsSync(documentPath)) {
-          await unlink(documentPath);
+        // Use the file name rather than trusting the id stored inside the file
+        const documentId = file.replace(/\.json$/, '');
+        if (!isValidDocumentId(documentId)) {
+          console.error(`Skipping unexpected metadata file ${file}`);
+          continue;
         }
-        
-        // Delete metadata file
-        await unlink(filePath);
-        
+
+        await deleteDocumentFiles(documentId);
         console.log(`Deleted document ${documentId} from folder ${folderId}`);
       }
     } catch (error) {
@@ -301,7 +302,7 @@ export async function DELETE(
     const folderId = resolvedParams.id;
     
     // Validate folder ID format
-    if (!folderId || !folderId.startsWith('folder_')) {
+    if (!isValidFolderId(folderId)) {
       return NextResponse.json(
         { error: 'Invalid folder ID' },
         { status: 400 }
