@@ -3,7 +3,42 @@
 import { useEffect, useRef, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 
-const DOCUMENT_DATA = {};
+// Page setup for new documents, matching what Univer 0.10.6 created (and what
+// all documents made before the upgrade store). Univer 1.x would otherwise
+// create new documents in its pageless "modern" layout: 960px wide, 1.5 line
+// spacing and 12px between paragraphs, with no page outline or margin marks.
+const NEW_DOCUMENT_PAGE_SIZE = { width: 793.3333333333334, height: 1122.6666666666667 }; // A4 at 96 DPI
+const NEW_DOCUMENT_MARGIN = 50;
+const NEW_DOCUMENT_PARAGRAPH_STYLE = { spaceAbove: { v: 5 }, lineSpacing: 1, spaceBelow: { v: 0 } };
+
+// Build an empty document in the old A4 page layout, starting from Univer's own
+// empty snapshot (so all required fields are present) with the page layout
+// ("traditional" flavor) and 0.10.6's page size, margins and paragraph spacing.
+function createBlankDocument(getDocsEmptySnapshot: any, traditionalFlavor: number) {
+  const blank = getDocsEmptySnapshot(undefined, 'enUS', '', traditionalFlavor);
+  blank.documentStyle = {
+    ...blank.documentStyle,
+    pageSize: { ...NEW_DOCUMENT_PAGE_SIZE },
+    marginTop: NEW_DOCUMENT_MARGIN,
+    marginBottom: NEW_DOCUMENT_MARGIN,
+    marginLeft: NEW_DOCUMENT_MARGIN,
+    marginRight: NEW_DOCUMENT_MARGIN,
+  };
+  blank.body.paragraphs = blank.body.paragraphs.map((paragraph: any) => ({
+    ...paragraph,
+    paragraphStyle: { ...NEW_DOCUMENT_PARAGRAPH_STYLE },
+  }));
+  return blank;
+}
+
+// Editor colours matched to how Univer 0.10.6 looked on screen. Measured from
+// before/after screenshots: 0.10.6 rendered the L-marks at ~rgb(198-208) grey
+// and the page outline at ~rgb(210-219); 1.x renders its defaults crisply
+// (marks #A8B0BD, darker and bluish; outline #E3E5EA, lighter). Applied
+// through the page-background layer; see applyWhiteWorkspace in the init effect.
+const EDITOR_WORKSPACE_COLOR = '#ffffff'; // area around the page (1.x: grey)
+const EDITOR_PAGE_OUTLINE_COLOR = '#d6d6d6'; // page border
+const EDITOR_MARGIN_MARK_COLOR = '#c4c4c4'; // L-shaped margin marks
 
 
 interface UniverEditorProps {
@@ -196,7 +231,7 @@ export default function UniverEditor({
       try {
         // Load everything first; nothing is created until all awaits are done.
         const [
-          { LocaleType, mergeLocales, Univer, UniverInstanceType },
+          { LocaleType, mergeLocales, Univer, UniverInstanceType, DocumentFlavor, getDocsEmptySnapshot },
           DesignEnUS,
           { UniverDocsPlugin },
           { UniverDocsUIPlugin },
@@ -260,18 +295,20 @@ export default function UniverEditor({
         const documentData = initialData?.content ? {
           id: documentId || 'default-doc',
           ...initialData.content
-        } : DOCUMENT_DATA;
+        } : createBlankDocument(getDocsEmptySnapshot, DocumentFlavor.TRADITIONAL);
 
         const docUnit = univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
 
         // Univer 1.x paints page-layout documents on a grey workspace
         // ("gray.100", drawn onto the canvas by its page-background layer),
-        // where 0.10.6 was white. There's no setting for it, and Univer resets
-        // the layer's colours on every re-layout (i.e. on each edit), so wrap
-        // the layer's setFillColors: whenever no workspace colour is given,
-        // use white. Page colour and borders pass through unchanged. If a
+        // where 0.10.6 was white, and draws the page outline lighter and the
+        // L-shaped margin marks darker/bluer than 0.10.6 did. There's no
+        // setting for these, and Univer resets the layer's colours on every
+        // re-layout (i.e. on each edit), so wrap the layer's setFillColors:
+        // whenever Univer leaves a colour unset, use the 0.10.6 look instead.
+        // The page fill itself is left at Univer's default (white). If a
         // future Univer version renames the layer this does nothing and the
-        // grey returns.
+        // 1.x colours return.
         const unitId = docUnit?.getUnitId?.();
         let attempts = 0;
         const applyWhiteWorkspace = () => {
@@ -288,7 +325,12 @@ export default function UniverEditor({
                   pageFill?: string,
                   pageStroke?: string,
                   marginStroke?: string
-                ) => setFillColors(workspaceFill ?? '#ffffff', pageFill, pageStroke, marginStroke);
+                ) => setFillColors(
+                  workspaceFill ?? EDITOR_WORKSPACE_COLOR,
+                  pageFill,
+                  pageStroke ?? EDITOR_PAGE_OUTLINE_COLOR,
+                  marginStroke ?? EDITOR_MARGIN_MARK_COLOR
+                );
                 background.__unidriveWhiteWorkspace = true;
               }
               background.setFillColors(undefined, undefined, undefined, undefined);
