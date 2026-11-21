@@ -11,6 +11,31 @@ const NEW_DOCUMENT_PAGE_SIZE = { width: 793.3333333333334, height: 1122.66666666
 const NEW_DOCUMENT_MARGIN = 50;
 const NEW_DOCUMENT_PARAGRAPH_STYLE = { spaceAbove: { v: 5 }, lineSpacing: 1, spaceBelow: { v: 0 } };
 
+// Univer 1.x adds Notion-style "block" menus that 0.10.6 didn't have:
+//  - a "T ⠿" handle (or "+" on empty lines) next to whichever paragraph the
+//    mouse is over, with a drag grip and a menu;
+//  - a "/" command menu that opens whenever "/" is typed, swallowing the slash.
+// There are no settings for either. Both come from DocParagraphMenuService:
+// the "/" menu is gated by two checks (keydown and text input), and both
+// menus are displayed through showParagraphMenu. Make the checks always fail
+// (so "/" is typed as a normal character) and make showParagraphMenu a no-op.
+// The table handle (shown when hovering a table) is not affected.
+function disableBlockMenus(render: any, DocParagraphMenuService: any) {
+  const service = render?.with?.(DocParagraphMenuService);
+  if (!service || service.__unidriveBlockMenusDisabled) return;
+  const expected = ['showParagraphMenu', '_shouldOpenSlashMenu', '_shouldOpenSlashMenuFromInput'];
+  if (!expected.every((name) => typeof service[name] === 'function')) {
+    // Univer internals changed; leave the menus alone rather than risk breaking input
+    console.warn('Block menus not disabled: unexpected Univer internals');
+    return;
+  }
+  service._shouldOpenSlashMenu = () => false;
+  service._shouldOpenSlashMenuFromInput = () => false;
+  service.showParagraphMenu = () => {};
+  service.hideParagraphMenu?.(true);
+  service.__unidriveBlockMenusDisabled = true;
+}
+
 // Build an empty document in the old A4 page layout, starting from Univer's own
 // empty snapshot (so all required fields are present) with the page layout
 // ("traditional" flavor) and 0.10.6's page size, margins and paragraph spacing.
@@ -234,7 +259,7 @@ export default function UniverEditor({
           { LocaleType, mergeLocales, Univer, UniverInstanceType, DocumentFlavor, getDocsEmptySnapshot },
           DesignEnUS,
           { UniverDocsPlugin },
-          { UniverDocsUIPlugin },
+          { UniverDocsUIPlugin, DocParagraphMenuService },
           DocsUIEnUS,
           { UniverFormulaEnginePlugin },
           { UniverRenderEnginePlugin, IRenderManagerService },
@@ -334,6 +359,7 @@ export default function UniverEditor({
                 background.__unidriveWhiteWorkspace = true;
               }
               background.setFillColors(undefined, undefined, undefined, undefined);
+              disableBlockMenus(render, DocParagraphMenuService);
               return;
             }
           } catch (error) {
