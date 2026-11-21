@@ -11,6 +11,51 @@ const NEW_DOCUMENT_PAGE_SIZE = { width: 793.3333333333334, height: 1122.66666666
 const NEW_DOCUMENT_MARGIN = 50;
 const NEW_DOCUMENT_PARAGRAPH_STYLE = { spaceAbove: { v: 5 }, lineSpacing: 1, spaceBelow: { v: 0 } };
 
+// Look up a service on the document's render unit. Univer registers most of
+// these in its "rendered" lifecycle stage, which can come after the render unit
+// (and its page-background layer) already exist, and asking too early throws.
+// Treat that as "not ready yet" so the caller retries.
+function getRenderService(render: any, ServiceClass: any): any | null {
+  try {
+    return render?.with?.(ServiceClass) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Univer 1.x paints page-layout documents on a grey workspace ("gray.100",
+// drawn onto the canvas by its page-background layer), where 0.10.6 was white,
+// and draws the page outline lighter and the L-shaped margin marks darker and
+// bluer than 0.10.6 did. There's no setting for these, and Univer resets the
+// layer's colours on every re-layout (i.e. on each edit), so wrap the layer's
+// setFillColors: whenever Univer leaves a colour unset, use the 0.10.6 look.
+// The page fill itself is left at Univer's default (white).
+function applyWorkspaceColours(render: any): boolean {
+  const background = render?.components?.get?.('__Document_Render_Background__');
+  if (!background) return false; // not created yet
+  if (typeof background.setFillColors !== 'function') {
+    console.warn('Editor colours not applied: unexpected Univer internals');
+    return true;
+  }
+  if (!background.__unidriveWhiteWorkspace) {
+    const setFillColors = background.setFillColors.bind(background);
+    background.setFillColors = (
+      workspaceFill?: string,
+      pageFill?: string,
+      pageStroke?: string,
+      marginStroke?: string
+    ) => setFillColors(
+      workspaceFill ?? EDITOR_WORKSPACE_COLOR,
+      pageFill,
+      pageStroke ?? EDITOR_PAGE_OUTLINE_COLOR,
+      marginStroke ?? EDITOR_MARGIN_MARK_COLOR
+    );
+    background.__unidriveWhiteWorkspace = true;
+  }
+  background.setFillColors(undefined, undefined, undefined, undefined);
+  return true;
+}
+
 // Univer 1.x adds Notion-style "block" menus that 0.10.6 didn't have:
 //  - a "T ⠿" handle (or "+" on empty lines) next to whichever paragraph the
 //    mouse is over, with a drag grip and a menu;
@@ -20,20 +65,22 @@ const NEW_DOCUMENT_PARAGRAPH_STYLE = { spaceAbove: { v: 5 }, lineSpacing: 1, spa
 // menus are displayed through showParagraphMenu. Make the checks always fail
 // (so "/" is typed as a normal character) and make showParagraphMenu a no-op.
 // The table handle (shown when hovering a table) is not affected.
-function disableBlockMenus(render: any, DocParagraphMenuService: any) {
-  const service = render?.with?.(DocParagraphMenuService);
-  if (!service || service.__unidriveBlockMenusDisabled) return;
+function disableBlockMenus(render: any, DocParagraphMenuService: any): boolean {
+  const service = getRenderService(render, DocParagraphMenuService);
+  if (!service) return false; // not registered yet
+  if (service.__unidriveBlockMenusDisabled) return true;
   const expected = ['showParagraphMenu', '_shouldOpenSlashMenu', '_shouldOpenSlashMenuFromInput'];
   if (!expected.every((name) => typeof service[name] === 'function')) {
     // Univer internals changed; leave the menus alone rather than risk breaking input
     console.warn('Block menus not disabled: unexpected Univer internals');
-    return;
+    return true;
   }
   service._shouldOpenSlashMenu = () => false;
   service._shouldOpenSlashMenuFromInput = () => false;
   service.showParagraphMenu = () => {};
   service.hideParagraphMenu?.(true);
   service.__unidriveBlockMenusDisabled = true;
+  return true;
 }
 
 // Univer shows a floating formatting toolbar above any text selection, and
@@ -47,27 +94,31 @@ function disableBlockMenus(render: any, DocParagraphMenuService: any) {
 //    (This also turns off 1.x's Cmd/Ctrl+Shift+V "paste as plain text",
 //    which goes through the same flow; normal paste is unaffected.)
 // As with the other tweaks, unexpected internals mean nothing is patched.
-function disableSelectionToolbar(render: any, DocFloatMenuService: any) {
-  const service = render?.with?.(DocFloatMenuService);
-  if (!service || service.__unidriveSelectionToolbarDisabled) return;
+function disableSelectionToolbar(render: any, DocFloatMenuService: any): boolean {
+  const service = getRenderService(render, DocFloatMenuService);
+  if (!service) return false; // not registered yet
+  if (service.__unidriveSelectionToolbarDisabled) return true;
   if (typeof service._showFloatMenu !== 'function') {
     console.warn('Selection toolbar not disabled: unexpected Univer internals');
-    return;
+    return true;
   }
   service._showFloatMenu = () => {};
   service.hideFloatMenu?.();
   service.__unidriveSelectionToolbarDisabled = true;
+  return true;
 }
 
-function disablePasteOptions(clipboardService: any) {
-  if (!clipboardService || clipboardService.__unidrivePasteOptionsDisabled) return;
+function disablePasteOptions(clipboardService: any): boolean {
+  if (!clipboardService) return false; // not available yet
+  if (clipboardService.__unidrivePasteOptionsDisabled) return true;
   if (typeof clipboardService.isPasteOptionsEnabled !== 'function') {
     console.warn('Paste options popup not disabled: unexpected Univer internals');
-    return;
+    return true;
   }
   clipboardService.isPasteOptionsEnabled = () => false;
   clipboardService.dismissPasteOptions?.();
   clipboardService.__unidrivePasteOptionsDisabled = true;
+  return true;
 }
 
 // Build an empty document in the old A4 page layout, starting from Univer's own
@@ -94,7 +145,7 @@ function createBlankDocument(getDocsEmptySnapshot: any, traditionalFlavor: numbe
 // before/after screenshots: 0.10.6 rendered the L-marks at ~rgb(198-208) grey
 // and the page outline at ~rgb(210-219); 1.x renders its defaults crisply
 // (marks #A8B0BD, darker and bluish; outline #E3E5EA, lighter). Applied
-// through the page-background layer; see applyWhiteWorkspace in the init effect.
+// through the page-background layer; see applyWorkspaceColours.
 const EDITOR_WORKSPACE_COLOR = '#ffffff'; // area around the page (1.x: grey)
 const EDITOR_PAGE_OUTLINE_COLOR = '#d6d6d6'; // page border
 const EDITOR_MARGIN_MARK_COLOR = '#c4c4c4'; // L-shaped margin marks
@@ -358,54 +409,47 @@ export default function UniverEditor({
 
         const docUnit = univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
 
-        // Univer 1.x paints page-layout documents on a grey workspace
-        // ("gray.100", drawn onto the canvas by its page-background layer),
-        // where 0.10.6 was white, and draws the page outline lighter and the
-        // L-shaped margin marks darker/bluer than 0.10.6 did. There's no
-        // setting for these, and Univer resets the layer's colours on every
-        // re-layout (i.e. on each edit), so wrap the layer's setFillColors:
-        // whenever Univer leaves a colour unset, use the 0.10.6 look instead.
-        // The page fill itself is left at Univer's default (white). If a
-        // future Univer version renames the layer this does nothing and the
-        // 1.x colours return.
+        // Apply the editor tweaks above (colours, block menus, selection
+        // toolbar, paste popup). The render unit and its services are created
+        // asynchronously and at different lifecycle stages, so retry each one
+        // independently until it has been applied (for up to ~15 seconds),
+        // instead of giving up on the first failure. Uses a timer rather than
+        // animation frames, which browsers pause while a tab is hidden.
         const unitId = docUnit?.getUnitId?.();
-        let attempts = 0;
-        const applyWhiteWorkspace = () => {
-          if (cancelled || !unitId) return;
-          try {
-            const renderManager = univer.__getInjector().get(IRenderManagerService);
-            const render: any = renderManager.getRenderUnitById(unitId);
-            const background = render?.components?.get('__Document_Render_Background__');
-            if (background?.setFillColors) {
-              if (!background.__unidriveWhiteWorkspace) {
-                const setFillColors = background.setFillColors.bind(background);
-                background.setFillColors = (
-                  workspaceFill?: string,
-                  pageFill?: string,
-                  pageStroke?: string,
-                  marginStroke?: string
-                ) => setFillColors(
-                  workspaceFill ?? EDITOR_WORKSPACE_COLOR,
-                  pageFill,
-                  pageStroke ?? EDITOR_PAGE_OUTLINE_COLOR,
-                  marginStroke ?? EDITOR_MARGIN_MARK_COLOR
-                );
-                background.__unidriveWhiteWorkspace = true;
-              }
-              background.setFillColors(undefined, undefined, undefined, undefined);
-              disableBlockMenus(render, DocParagraphMenuService);
-              disableSelectionToolbar(render, DocFloatMenuService);
-              disablePasteOptions(univer.__getInjector().get(IDocClipboardService));
-              return;
-            }
-          } catch (error) {
-            console.warn('Could not set editor workspace colour:', error);
-            return;
-          }
-          // The render unit is created asynchronously; retry for ~2 seconds
-          if (++attempts < 120) requestAnimationFrame(applyWhiteWorkspace);
+        const pending: Record<string, boolean> = {
+          colours: true,
+          blockMenus: true,
+          selectionToolbar: true,
+          pasteOptions: true,
         };
-        requestAnimationFrame(applyWhiteWorkspace);
+        let attempts = 0;
+        const applyEditorTweaks = () => {
+          if (cancelled || !unitId) return;
+          let render: any = null;
+          let clipboardService: any = null;
+          try {
+            const injector = univer.__getInjector();
+            render = injector.get(IRenderManagerService).getRenderUnitById(unitId);
+            clipboardService = injector.get(IDocClipboardService);
+          } catch {
+            // Services not available yet; retried below
+          }
+          if (render) {
+            if (pending.colours) pending.colours = !applyWorkspaceColours(render);
+            if (pending.blockMenus) pending.blockMenus = !disableBlockMenus(render, DocParagraphMenuService);
+            if (pending.selectionToolbar) pending.selectionToolbar = !disableSelectionToolbar(render, DocFloatMenuService);
+          }
+          if (pending.pasteOptions) pending.pasteOptions = !disablePasteOptions(clipboardService);
+
+          const remaining = Object.keys(pending).filter((key) => pending[key]);
+          if (remaining.length === 0) return;
+          if (++attempts < 300) {
+            setTimeout(applyEditorTweaks, 50);
+          } else {
+            console.warn('Editor tweaks not applied:', remaining.join(', '));
+          }
+        };
+        setTimeout(applyEditorTweaks, 0);
 
         // Set up auto-save once the document exists
         if (onSave) {
