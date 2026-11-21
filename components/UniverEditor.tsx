@@ -3,7 +3,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { useToast } from '../components/ToastProvider';
 
-const DOCUMENT_DATA = {};
+// Page setup for new documents, matching what Univer 0.10.6 created (and what
+// all documents made before the upgrade store). Univer 1.x would otherwise
+// create new documents in its pageless "modern" layout: 960px wide, 1.5 line
+// spacing and 12px between paragraphs, with no page outline or margin marks.
+const NEW_DOCUMENT_PAGE_SIZE = { width: 793.3333333333334, height: 1122.6666666666667 }; // A4 at 96 DPI
+const NEW_DOCUMENT_MARGIN = 50;
+const NEW_DOCUMENT_PARAGRAPH_STYLE = { spaceAbove: { v: 5 }, lineSpacing: 1, spaceBelow: { v: 0 } };
+
+// Build an empty document in the old A4 page layout, starting from Univer's own
+// empty snapshot (so all required fields are present) with the page layout
+// ("traditional" flavor) and 0.10.6's page size, margins and paragraph spacing.
+function createBlankDocument(getDocsEmptySnapshot: any, traditionalFlavor: number) {
+  const blank = getDocsEmptySnapshot(undefined, 'enUS', '', traditionalFlavor);
+  blank.documentStyle = {
+    ...blank.documentStyle,
+    pageSize: { ...NEW_DOCUMENT_PAGE_SIZE },
+    marginTop: NEW_DOCUMENT_MARGIN,
+    marginBottom: NEW_DOCUMENT_MARGIN,
+    marginLeft: NEW_DOCUMENT_MARGIN,
+    marginRight: NEW_DOCUMENT_MARGIN,
+  };
+  blank.body.paragraphs = blank.body.paragraphs.map((paragraph: any) => ({
+    ...paragraph,
+    paragraphStyle: { ...NEW_DOCUMENT_PARAGRAPH_STYLE },
+  }));
+  return blank;
+}
 
 // Editor colours matched to how Univer 0.10.6 looked on screen. Measured from
 // before/after screenshots: 0.10.6 rendered the L-marks at ~rgb(198-208) grey
@@ -205,7 +231,7 @@ export default function UniverEditor({
       try {
         // Load everything first; nothing is created until all awaits are done.
         const [
-          { LocaleType, mergeLocales, Univer, UniverInstanceType },
+          { LocaleType, mergeLocales, Univer, UniverInstanceType, DocumentFlavor, getDocsEmptySnapshot },
           DesignEnUS,
           { UniverDocsPlugin },
           { UniverDocsUIPlugin },
@@ -269,7 +295,7 @@ export default function UniverEditor({
         const documentData = initialData?.content ? {
           id: documentId || 'default-doc',
           ...initialData.content
-        } : DOCUMENT_DATA;
+        } : createBlankDocument(getDocsEmptySnapshot, DocumentFlavor.TRADITIONAL);
 
         const docUnit = univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
 
