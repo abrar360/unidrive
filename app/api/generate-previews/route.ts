@@ -25,7 +25,7 @@ export async function POST() {
       try {
         const documentId = file.replace('.json', '');
         const previewsDir = join(storageDir, 'previews');
-        const previewPath = join(previewsDir, `${documentId}.png`);
+        const previewPath = join(previewsDir, `${documentId}.svg`);
         
         // Skip if preview already exists
         if (existsSync(previewPath)) {

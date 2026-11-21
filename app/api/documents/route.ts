@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir, readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { isValidFolderId } from '../../../utils/ids';
 import { previewGenerator } from '../../../utils/preview-generator';
 
 // Generate a unique document ID using timestamp + random string
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
     // Optional folder to create the document in (same rules as the move endpoint)
     let folderId: string | undefined;
     if (body.folderId !== undefined && body.folderId !== null) {
-      if (typeof body.folderId !== 'string' || !/^folder_[A-Za-z0-9_]+$/.test(body.folderId)) {
+      if (!isValidFolderId(body.folderId)) {
         return NextResponse.json(
           { error: 'Invalid folder ID' },
           { status: 400 }

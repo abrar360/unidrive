@@ -30,7 +30,7 @@ export async function generateMissingPreviews() {
     for (const file of documentFiles) {
       try {
         const documentId = file.replace('.json', '');
-        const previewPath = join(previewsDir, `${documentId}.png`);
+        const previewPath = join(previewsDir, `${documentId}.svg`);
         
         // Skip if preview already exists
         if (existsSync(previewPath)) {

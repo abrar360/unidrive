@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import { useToast } from './ToastProvider';
 import MoveToFolderDialog from './MoveToFolderDialog';
+import { PREVIEW_PLACEHOLDER_URL } from '../utils/preview-placeholder';
 
 interface FileItemProps {
   icon: string;
@@ -239,7 +240,12 @@ const FileItem: React.FC<FileItemProps> = ({
             key={`${id}-${imageKey}`}
             alt={title}
             className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-300 ease-out" 
-            src={previewUrl} 
+            src={previewUrl}
+            onError={(e) => {
+              // Missing or broken thumbnail: show the inline placeholder (once)
+              const img = e.currentTarget;
+              if (img.src !== PREVIEW_PLACEHOLDER_URL) img.src = PREVIEW_PLACEHOLDER_URL;
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent"></div>
         </div>

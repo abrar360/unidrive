@@ -7,6 +7,7 @@ import FileItem from '../components/FileItem';
 import FolderItem from '../components/FolderItem';
 import CreateFolderDialog from '../components/CreateFolderDialog';
 import { useToast } from '../components/ToastProvider';
+import { PREVIEW_PLACEHOLDER_URL } from '../utils/preview-placeholder';
 
 interface Document {
   id: string;
@@ -405,7 +406,7 @@ export default function Home() {
                       id={file.id}
                       icon="article"
                       title={file.title}
-                      previewUrl={file.previewUrl || 'https://via.placeholder.com/200x150/1f1f1f/ffffff?text=Document'}
+                      previewUrl={file.previewUrl || PREVIEW_PLACEHOLDER_URL}
                       activity={file.activity}
                       date={file.date}
                       createdAt={file.createdAt}

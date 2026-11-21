@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { isValidDocumentId } from '../../../../utils/ids';
 
 export async function GET(
   request: NextRequest,
@@ -10,8 +11,9 @@ export async function GET(
   try {
     const { filename } = await params;
     
-    // Validate filename to prevent directory traversal
-    if (!filename || filename.includes('..') || (!filename.endsWith('.png') && !filename.endsWith('.svg'))) {
+    // Only "<documentId>.svg" / "<documentId>.png": prevents directory traversal
+    const match = typeof filename === 'string' ? filename.match(/^(.+)\.(svg|png)$/) : null;
+    if (!match || !isValidDocumentId(match[1])) {
       return NextResponse.json(
         { error: 'Invalid filename' },
         { status: 400 }
