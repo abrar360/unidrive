@@ -202,7 +202,7 @@ export default function UniverEditor({
           { UniverDocsUIPlugin },
           DocsUIEnUS,
           { UniverFormulaEnginePlugin },
-          { UniverRenderEnginePlugin },
+          { UniverRenderEnginePlugin, IRenderManagerService },
           { UniverUIPlugin },
           UIEnUS,
           { FUniver },
@@ -249,6 +249,9 @@ export default function UniverEditor({
         univer.registerPlugin(UniverFormulaEnginePlugin);
         univer.registerPlugin(UniverUIPlugin, {
           container: containerRef.current,
+          // Univer 1.x defaults to a tabbed ribbon ("classic": Start / Insert /
+          // View). "simple" puts all tools in one row, like 0.10.6 did.
+          ribbonType: 'simple',
         });
         univer.registerPlugin(UniverDocsPlugin);
         univer.registerPlugin(UniverDocsUIPlugin);
@@ -259,7 +262,46 @@ export default function UniverEditor({
           ...initialData.content
         } : DOCUMENT_DATA;
 
-        univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
+        const docUnit = univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
+
+        // Univer 1.x paints page-layout documents on a grey workspace
+        // ("gray.100", drawn onto the canvas by its page-background layer),
+        // where 0.10.6 was white. There's no setting for it, and Univer resets
+        // the layer's colours on every re-layout (i.e. on each edit), so wrap
+        // the layer's setFillColors: whenever no workspace colour is given,
+        // use white. Page colour and borders pass through unchanged. If a
+        // future Univer version renames the layer this does nothing and the
+        // grey returns.
+        const unitId = docUnit?.getUnitId?.();
+        let attempts = 0;
+        const applyWhiteWorkspace = () => {
+          if (cancelled || !unitId) return;
+          try {
+            const renderManager = univer.__getInjector().get(IRenderManagerService);
+            const render: any = renderManager.getRenderUnitById(unitId);
+            const background = render?.components?.get('__Document_Render_Background__');
+            if (background?.setFillColors) {
+              if (!background.__unidriveWhiteWorkspace) {
+                const setFillColors = background.setFillColors.bind(background);
+                background.setFillColors = (
+                  workspaceFill?: string,
+                  pageFill?: string,
+                  pageStroke?: string,
+                  marginStroke?: string
+                ) => setFillColors(workspaceFill ?? '#ffffff', pageFill, pageStroke, marginStroke);
+                background.__unidriveWhiteWorkspace = true;
+              }
+              background.setFillColors(undefined, undefined, undefined, undefined);
+              return;
+            }
+          } catch (error) {
+            console.warn('Could not set editor workspace colour:', error);
+            return;
+          }
+          // The render unit is created asynchronously; retry for ~2 seconds
+          if (++attempts < 120) requestAnimationFrame(applyWhiteWorkspace);
+        };
+        requestAnimationFrame(applyWhiteWorkspace);
 
         // Set up auto-save once the document exists
         if (onSave) {
@@ -370,9 +412,10 @@ export default function UniverEditor({
         </button>
       </div>
 
-      {/* Univer Editor Container */}
+      {/* Univer Editor Container (see .unidrive-univer in styles/univer.css) */}
       <div
         ref={containerRef}
+        className="unidrive-univer"
         style={{
           width: '100%',
           height: '100%',
