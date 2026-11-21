@@ -9,6 +9,16 @@
   position: relative;
 }
 
+/*
+ * Univer 1.x draws page-layout documents on a grey workspace
+ * (var(--univer-gray-100)), set inline on the canvas element. Univer 0.10.6
+ * showed a white background, so keep that look. Only the workspace colour
+ * changes; the document itself and its stored layout are untouched.
+ */
+.unidrive-univer canvas {
+  background-color: #ffffff !important;
+}
+
 /* Override any conflicting styles */
 .univer-container * {
   box-sizing: border-box;
