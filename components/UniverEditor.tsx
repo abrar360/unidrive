@@ -36,6 +36,40 @@ function disableBlockMenus(render: any, DocParagraphMenuService: any) {
   service.__unidriveBlockMenusDisabled = true;
 }
 
+// Univer shows a floating formatting toolbar above any text selection, and
+// 1.x adds a "paste options" popup (Keep source / Match destination / Text
+// only) after every paste. Neither has a setting.
+//  - The selection toolbar is shown by DocFloatMenuService._showFloatMenu
+//    whenever the selection becomes a non-empty range: make it a no-op.
+//    All of its formatting buttons are also in the main toolbar.
+//  - Every step of the paste-options flow checks
+//    IDocClipboardService.isPasteOptionsEnabled: make it return false.
+//    (This also turns off 1.x's Cmd/Ctrl+Shift+V "paste as plain text",
+//    which goes through the same flow; normal paste is unaffected.)
+// As with the other tweaks, unexpected internals mean nothing is patched.
+function disableSelectionToolbar(render: any, DocFloatMenuService: any) {
+  const service = render?.with?.(DocFloatMenuService);
+  if (!service || service.__unidriveSelectionToolbarDisabled) return;
+  if (typeof service._showFloatMenu !== 'function') {
+    console.warn('Selection toolbar not disabled: unexpected Univer internals');
+    return;
+  }
+  service._showFloatMenu = () => {};
+  service.hideFloatMenu?.();
+  service.__unidriveSelectionToolbarDisabled = true;
+}
+
+function disablePasteOptions(clipboardService: any) {
+  if (!clipboardService || clipboardService.__unidrivePasteOptionsDisabled) return;
+  if (typeof clipboardService.isPasteOptionsEnabled !== 'function') {
+    console.warn('Paste options popup not disabled: unexpected Univer internals');
+    return;
+  }
+  clipboardService.isPasteOptionsEnabled = () => false;
+  clipboardService.dismissPasteOptions?.();
+  clipboardService.__unidrivePasteOptionsDisabled = true;
+}
+
 // Build an empty document in the old A4 page layout, starting from Univer's own
 // empty snapshot (so all required fields are present) with the page layout
 // ("traditional" flavor) and 0.10.6's page size, margins and paragraph spacing.
@@ -259,7 +293,7 @@ export default function UniverEditor({
           { LocaleType, mergeLocales, Univer, UniverInstanceType, DocumentFlavor, getDocsEmptySnapshot },
           DesignEnUS,
           { UniverDocsPlugin },
-          { UniverDocsUIPlugin, DocParagraphMenuService },
+          { UniverDocsUIPlugin, DocParagraphMenuService, DocFloatMenuService, IDocClipboardService },
           DocsUIEnUS,
           { UniverFormulaEnginePlugin },
           { UniverRenderEnginePlugin, IRenderManagerService },
@@ -360,6 +394,8 @@ export default function UniverEditor({
               }
               background.setFillColors(undefined, undefined, undefined, undefined);
               disableBlockMenus(render, DocParagraphMenuService);
+              disableSelectionToolbar(render, DocFloatMenuService);
+              disablePasteOptions(univer.__getInjector().get(IDocClipboardService));
               return;
             }
           } catch (error) {
