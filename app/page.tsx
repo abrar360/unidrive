@@ -7,6 +7,7 @@ import FileItem from '../components/FileItem';
 import FolderItem from '../components/FolderItem';
 import CreateFolderDialog from '../components/CreateFolderDialog';
 import { useToast } from '../components/ToastProvider';
+import SidebarNav from '../components/SidebarNav';
 import { PREVIEW_PLACEHOLDER_URL } from '../utils/preview-placeholder';
 
 interface Document {
@@ -79,25 +80,6 @@ export default function Home() {
   useEffect(() => {
     fetchDocuments();
     fetchFolders();
-  }, []);
-
-  // Listen for document updates and refresh thumbnails
-  useEffect(() => {
-    const handleDocumentUpdate = (event: any) => {
-      const { documentId, timestamp } = event.detail;
-      console.log('Document updated, refreshing thumbnails:', { documentId, timestamp });
-      
-      // Force refresh of the documents list to get updated preview URLs
-      setTimeout(() => {
-        fetchDocuments();
-      }, 1000); // Small delay to ensure backend has processed the preview
-    };
-
-    window.addEventListener('document-updated', handleDocumentUpdate);
-    
-    return () => {
-      window.removeEventListener('document-updated', handleDocumentUpdate);
-    };
   }, []);
 
   // Filter documents based on search query
@@ -185,42 +167,7 @@ export default function Home() {
           </Link>
 
           {/* Navigation - Clean */}
-          <nav className="space-y-0.5">
-            <a href="#" className="nav-link active">
-              <span className="material-icons text-[18px] mr-3">home</span>
-              Home
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">folder</span>
-              My Drive
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">computer</span>
-              Computers
-            </a>
-            
-            <div className="h-px bg-white/[0.06] my-3"></div>
-            
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">people</span>
-              Shared with me
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">schedule</span>
-              Recent
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">star_border</span>
-              Starred
-            </a>
-            
-            <div className="h-px bg-white/[0.06] my-3"></div>
-            
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">delete</span>
-              Trash
-            </a>
-          </nav>
+          <SidebarNav active="home" />
         </div>
       </aside>
 
@@ -418,6 +365,10 @@ export default function Home() {
                         // Refresh documents and folders when a document is moved
                         fetchDocuments();
                         fetchFolders();
+                      }}
+                      onChanged={() => {
+                        // Rename / duplicate: refresh in place instead of reloading
+                        fetchDocuments();
                       }}
                     />
                   </div>

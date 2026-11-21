@@ -7,6 +7,7 @@ import FileItem from '../../../components/FileItem';
 import FolderItem from '../../../components/FolderItem';
 import CreateFolderDialog from '../../../components/CreateFolderDialog';
 import { useToast } from '../../../components/ToastProvider';
+import SidebarNav from '../../../components/SidebarNav';
 
 interface Document {
   id: string;
@@ -142,29 +143,6 @@ export default function FolderView() {
     }
   };
 
-  const handleMoveToFolder = async (documentId: string, targetFolderId: string | null) => {
-    try {
-      const response = await fetch(`/api/documents/${documentId}/move`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ folderId: targetFolderId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to move document');
-      }
-
-      // Remove document from current folder view
-      handleDocumentDelete(documentId);
-    } catch (error) {
-      console.error('Error moving document:', error);
-      showToast(`Failed to move document: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
-    }
-  };
-
   const handleMoveComplete = () => {
     // Refresh folder data after a document is moved
     fetchFolderData();
@@ -223,42 +201,7 @@ export default function FolderView() {
           </Link>
 
           {/* Navigation - Clean */}
-          <nav className="space-y-0.5">
-            <Link href="/" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">home</span>
-              Home
-            </Link>
-            <a href="#" className="nav-link active">
-              <span className="material-icons text-[18px] mr-3">folder</span>
-              My Drive
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">computer</span>
-              Computers
-            </a>
-            
-            <div className="h-px bg-white/[0.06] my-3"></div>
-            
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">people</span>
-              Shared with me
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">schedule</span>
-              Recent
-            </a>
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">star_border</span>
-              Starred
-            </a>
-            
-            <div className="h-px bg-white/[0.06] my-3"></div>
-            
-            <a href="#" className="nav-link">
-              <span className="material-icons text-[18px] mr-3">delete</span>
-              Trash
-            </a>
-          </nav>
+          <SidebarNav active="drive" />
         </div>
       </aside>
 
@@ -456,6 +399,7 @@ export default function FolderView() {
                       folderId={folderId}
                       onDelete={handleDocumentDelete}
                       onMoved={handleMoveComplete}
+                      onChanged={fetchFolderData}
                     />
                   </div>
                 ))}

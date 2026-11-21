@@ -32,10 +32,6 @@ function CreateDocument() {
   const folderId = searchParams.get('folderId');
 
   const handleSave = async (documentData: any) => {
-    console.log('🔍 DEBUG: handleSave called, current savedDocumentIdRef:', savedDocumentIdRef.current);
-    console.log('🔍 DEBUG: current savedDocumentId state:', savedDocumentId);
-    console.log('🔍 DEBUG: documentData:', documentData);
-    
     try {
       let response;
 
@@ -46,7 +42,6 @@ function CreateDocument() {
 
       // Use ref for immediate access to document ID
       if (savedDocumentIdRef.current) {
-        console.log('Updating existing document:', savedDocumentIdRef.current);
         response = await fetch(`/api/documents/${savedDocumentIdRef.current}`, {
           method: 'PUT',
           headers: {
@@ -56,7 +51,6 @@ function CreateDocument() {
         });
       } else {
         // Create new document only on first save
-        console.log('Creating new document');
         const createRequest = fetch('/api/documents', {
           method: 'POST',
           headers: {
@@ -78,7 +72,6 @@ function CreateDocument() {
         createRequestRef.current = createRequest;
         try {
           const created = await createRequest;
-          console.log('Document created:', created);
           return created;
         } finally {
           createRequestRef.current = null;
@@ -90,7 +83,6 @@ function CreateDocument() {
       }
 
       const result = await response.json();
-      console.log('Document saved:', result);
 
       // Optionally redirect to the edit page after save
       // router.push(`/document/${result.documentId}`);

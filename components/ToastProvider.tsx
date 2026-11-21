@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import Toast, { ToastType, ToastProps } from './Toast';
 
 interface ToastContextType {
@@ -16,14 +16,17 @@ interface ToastItem extends Omit<ToastProps, 'onClose'> {
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  // Incrementing ids: Date.now() collided when two toasts were shown in the
+  // same millisecond (duplicate React keys, closing one closed both)
+  const nextIdRef = useRef(1);
 
   const showToast = useCallback((message: string, type: ToastType, duration = 5000) => {
-    const id = Date.now();
+    const id = nextIdRef.current++;
     setToasts((prev) => [...prev, { id, message, type, duration }]);
   }, []);
 
   const hideToast = useCallback((id?: number) => {
-    if (id) {
+    if (id !== undefined) {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     } else {
       setToasts([]);

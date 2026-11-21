@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useToast } from './ToastProvider';
 
@@ -30,6 +30,10 @@ const FolderItem: React.FC<FolderItemProps> = ({
   const [isHovered, setIsHovered] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const [isMounted, setIsMounted] = useState(false);
+  // Set once the current rename has been saved or cancelled. Enter (or Escape)
+  // is followed by a blur as the input closes, which used to save again (or,
+  // after Escape, save the text that was just discarded).
+  const renameHandledRef = useRef(false);
   const { showToast } = useToast();
 
   // Track when component is mounted (client-side)
@@ -77,13 +81,16 @@ const FolderItem: React.FC<FolderItemProps> = ({
   };
 
   const handleRenameClick = () => {
+    renameHandledRef.current = false;
     setIsRenaming(true);
     setNewName(name);
     setShowMenu(false);
   };
 
   const handleRenameSave = async () => {
+    if (renameHandledRef.current) return;
     if (newName.trim() === name) {
+      renameHandledRef.current = true;
       setIsRenaming(false);
       return;
     }
@@ -94,6 +101,7 @@ const FolderItem: React.FC<FolderItemProps> = ({
       return;
     }
     
+    renameHandledRef.current = true;
     try {
       const response = await fetch(`/api/folders/${id}`, {
         method: 'PUT',
@@ -120,6 +128,7 @@ const FolderItem: React.FC<FolderItemProps> = ({
   };
 
   const handleRenameCancel = () => {
+    renameHandledRef.current = true;
     setNewName(name);
     setIsRenaming(false);
   };

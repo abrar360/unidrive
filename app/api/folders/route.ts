@@ -3,6 +3,7 @@ import { writeFile, mkdir, readdir, readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { countDocumentsByFolder } from '../../../utils/folder-counts';
+import { isValidFolderId } from '../../../utils/ids';
 
 // Generate a unique folder ID using timestamp + random string
 function generateFolderId(): string {
@@ -102,6 +103,25 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Optional parent folder: must be a valid ID of an existing folder,
+    // otherwise the new folder would be orphaned (listed nowhere)
+    let parentFolderId: string | null = null;
+    if (body.parentFolderId !== undefined && body.parentFolderId !== null && body.parentFolderId !== '') {
+      if (!isValidFolderId(body.parentFolderId)) {
+        return NextResponse.json(
+          { error: 'Invalid parent folder ID' },
+          { status: 400 }
+        );
+      }
+      if (!existsSync(join(process.cwd(), 'storage', 'folders', `${body.parentFolderId}.json`))) {
+        return NextResponse.json(
+          { error: 'Parent folder not found' },
+          { status: 404 }
+        );
+      }
+      parentFolderId = body.parentFolderId;
+    }
+
     // Generate unique folder ID
     const folderId = generateFolderId();
     
@@ -117,7 +137,7 @@ export async function POST(request: NextRequest) {
     const folderData = {
       id: folderId,
       name: sanitizedName,
-      parentFolderId: body.parentFolderId || null,
+      parentFolderId,
       createdAt: new Date().toISOString(),
       modifiedAt: new Date().toISOString(),
       documentCount: 0

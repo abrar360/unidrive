@@ -55,13 +55,7 @@ export default function EditDocument() {
         throw new Error('Failed to save document');
       }
       
-      const result = await response.json();
-      console.log('Document updated successfully:', result);
-      
-      // Dispatch event to notify dashboard that preview needs to be refreshed
-      window.dispatchEvent(new CustomEvent('document-updated', {
-        detail: { documentId: params.id, timestamp: Date.now() }
-      }));
+      await response.json();
     } catch (error) {
       console.error('Save failed:', error);
       showToast('Failed to save document', 'error');
