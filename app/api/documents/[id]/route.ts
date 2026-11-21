@@ -90,10 +90,10 @@ export async function PUT(
       );
     }
 
-    // Sanitize title to prevent file system issues
-    const sanitizedTitle = body.title
+    // Sanitize title to prevent file system issues (empty if not provided)
+    const requestedTitle = typeof body.title === 'string'
       ? body.title.replace(/[<>:"/\\|?*]/g, '').trim().substring(0, 100)
-      : 'Untitled Document';
+      : '';
 
     const storageDir = join(process.cwd(), 'storage');
     const documentsDir = join(storageDir, 'documents');
@@ -113,6 +113,22 @@ export async function PUT(
     const fileContent = await readFile(documentPath, 'utf-8');
     const existingDocument = JSON.parse(fileContent);
 
+    // Read existing metadata so fields owned elsewhere (e.g. folderId, set by the
+    // move endpoint) survive the save. Without this, every save moved the
+    // document back to the root.
+    let existingMetadata: Record<string, any> = {};
+    if (existsSync(metadataPath)) {
+      try {
+        existingMetadata = JSON.parse(await readFile(metadataPath, 'utf-8'));
+      } catch (metadataError) {
+        console.error(`Could not read metadata for ${documentId}, rebuilding it:`, metadataError);
+      }
+    }
+
+    // Keep the current title when the request doesn't supply a usable one
+    const sanitizedTitle =
+      requestedTitle || existingDocument.title || existingMetadata.title || 'Untitled Document';
+
     // Prepare updated document data
     const updatedDocument = {
       ...existingDocument,
@@ -123,6 +139,7 @@ export async function PUT(
 
     // Prepare updated metadata
     const updatedMetadata = {
+      ...existingMetadata,
       id: documentId,
       title: sanitizedTitle,
       createdAt: existingDocument.createdAt,

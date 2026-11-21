@@ -214,8 +214,8 @@ export default function FolderView() {
             <h1 className="text-lg font-semibold text-white tracking-tight">UniDrive</h1>
           </div>
 
-          {/* New Button - Simple */}
-          <Link href="/document/create">
+          {/* New Button - creates the document inside this folder */}
+          <Link href={`/document/create?folderId=${encodeURIComponent(folderId)}`}>
             <button className="btn-primary w-full mb-7 flex items-center justify-center space-x-2 py-2.5 rounded-lg shadow-sm">
               <span className="material-icons text-base">add</span>
               <span className="font-medium">New</span>

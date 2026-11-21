@@ -63,6 +63,8 @@ export default function EditDocument() {
     } catch (error) {
       console.error('Save failed:', error);
       showToast('Failed to save document', 'error');
+      // Re-throw so the editor keeps the change marked as unsaved and retries it
+      throw error;
     }
   };
 

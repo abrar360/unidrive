@@ -44,7 +44,6 @@ export default function UniversalEditor({ documentId, onSave, initialData }: Uni
         // Step 1: Load core modules
         console.log('📦 Loading core modules...');
         const { LocaleType, Univer, UniverInstanceType } = await import('@univerjs/core');
-        const { defaultTheme } = await import('@univerjs/design');
         console.log('✅ Core modules loaded');
 
         if (!mounted) return; // Check if component is still mounted
@@ -52,7 +51,7 @@ export default function UniversalEditor({ documentId, onSave, initialData }: Uni
         // Step 2: Create Univer instance
         console.log('🏗️ Creating Univer instance...');
         univer = new Univer({
-          theme: defaultTheme,
+          // Univer 1.x removed defaultTheme from @univerjs/design; the default theme applies automatically
           locale: LocaleType.EN_US,
         });
         console.log('✅ Univer instance created successfully');

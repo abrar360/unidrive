@@ -41,6 +41,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/*
+ * While the document editor is open, keep <body> free of the dark theme.
+ * Univer's fallback copy path (used when the Clipboard API is unavailable,
+ * e.g. plain http:// over a LAN or Tailscale address) renders the copied text
+ * in a hidden element under <body>. The browser bakes inherited styles into
+ * the copied HTML, so white text on a black background would be pasted back
+ * as white text with a black highlight.
+ */
+body.unidrive-editor-open {
+  background: transparent;
+  color: #000000;
+}
+
 /* Minimal scrollbar */
 ::-webkit-scrollbar {
   width: 4px;

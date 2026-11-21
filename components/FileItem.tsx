@@ -14,7 +14,9 @@ interface FileItemProps {
   createdAt?: string;
   modifiedAt?: string;
   size?: number;
+  folderId?: string;
   onDelete?: (id: string) => void;
+  onMoved?: () => void;
 }
 
 const FileItem: React.FC<FileItemProps> = ({
@@ -189,6 +191,8 @@ const FileItem: React.FC<FileItemProps> = ({
         body: JSON.stringify({
           title: duplicateTitle,
           content: documentData.content || {},
+          // Keep the copy in the same folder as the original
+          ...(folderId ? { folderId } : {}),
         }),
       });
       

@@ -93,12 +93,31 @@ export async function POST(request: NextRequest) {
     const sanitizedTitle = body.title
       ? body.title.replace(/[<>:"/\\|?*]/g, '').trim().substring(0, 100)
       : 'Untitled Document';
-    
+
+    const storageDir = join(process.cwd(), 'storage');
+
+    // Optional folder to create the document in (same rules as the move endpoint)
+    let folderId: string | undefined;
+    if (body.folderId !== undefined && body.folderId !== null) {
+      if (typeof body.folderId !== 'string' || !/^folder_[A-Za-z0-9_]+$/.test(body.folderId)) {
+        return NextResponse.json(
+          { error: 'Invalid folder ID' },
+          { status: 400 }
+        );
+      }
+      if (!existsSync(join(storageDir, 'folders', `${body.folderId}.json`))) {
+        return NextResponse.json(
+          { error: 'Target folder not found' },
+          { status: 404 }
+        );
+      }
+      folderId = body.folderId;
+    }
+
     // Generate unique document ID
     const documentId = generateDocumentId();
-    
+
     // Ensure storage directories exist
-    const storageDir = join(process.cwd(), 'storage');
     const documentsDir = join(storageDir, 'documents');
     const metadataDir = join(storageDir, 'metadata');
     
@@ -139,6 +158,7 @@ export async function POST(request: NextRequest) {
       modifiedAt: documentData.modifiedAt,
       size: JSON.stringify(documentData).length,
       type: 'document',
+      ...(folderId ? { folderId } : {}),
     };
 
     // Write document data and metadata to files
